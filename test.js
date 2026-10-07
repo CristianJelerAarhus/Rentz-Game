@@ -1,10 +1,16 @@
-const { createDeck, dealCards, shuffleDeck } = require("./deck.js");
+const { createDeck, dealCards } = require("./deck.js");
 const {
   createGame,
   chooseContract,
   playCardTricks,
   playCardRentz,
   skipTurnRentz,
+  findTrickWinner,
+  updateRentzTable,
+  checkRentzFinish,
+  advancePlayer,
+  isTheCardPlayedLegal,
+  removeCardFromHandAfterBeingPlayed,
 } = require("./game.js");
 const {
   scoreDiamonds,
@@ -12,6 +18,34 @@ const {
   scoreTotals,
   scoreRentz,
 } = require("./scoring.js");
+const {
+  MIN_PLAYERS,
+  MAX_PLAYERS,
+  CARDS_PER_PLAYER,
+  RANKS_MIN_PLAYERS,
+  RANKS_MAX_PLAYERS,
+  SUITS,
+  HEARTS_SUIT,
+  DIAMONDS_SUIT,
+  SPADES_SUIT,
+  CLOVER_SUIT,
+  RED_POPE_CONTRACT,
+  DIAMONDS_CONTRACT,
+  TOTALS_CONTRACT,
+  RENTZ_CONTRACT,
+  RED_POPE_PENALTY,
+  DIAMOND_PENALTY,
+  TOTALS_TRICK_PENALTY,
+  QUEEN_PENALTY,
+  RENTZ_STARTING_GAIN,
+  RENTZ_TAX,
+  RENTZ_STARTING_RANK,
+  K_RANK,
+  Q_RANK,
+  A_RANK,
+  LOWEST_RANK_MIN_PLAYERS,
+  LOWEST_RANK_MAX_PLAYERS,
+} = require("./constants.js");
 
 let passed = 0;
 let failed = 0;
@@ -19,11 +53,11 @@ let failed = 0;
 function test(name, fn) {
   try {
     fn();
-    console.log(`  ✅ ${name}`);
+    console.log(`  PASS: ${name}`);
     passed++;
   } catch (e) {
-    console.log(`  ❌ ${name}`);
-    console.log(`     ${e.message}`);
+    console.log(`  FAIL: ${name}`);
+    console.log(`        ${e.message}`);
     failed++;
   }
 }
@@ -32,71 +66,92 @@ function assert(condition, message) {
   if (!condition) throw new Error(message || "Assertion failed");
 }
 
-// ─────────────────────────────────────────────
-console.log("\n DECK TESTS");
-// ─────────────────────────────────────────────
+// -------------------------------------------------
+console.log("\nDECK TESTS");
+// -------------------------------------------------
 
-test("5 players → 40 cards", () => {
-  let deck = createDeck(5, 8);
+test("5 players produces 40 cards", () => {
+  const deck = createDeck(MIN_PLAYERS, CARDS_PER_PLAYER);
   assert(deck.cards.length === 40, `Expected 40, got ${deck.cards.length}`);
 });
 
-test("6 players → 48 cards", () => {
-  let deck = createDeck(6, 8);
+test("6 players produces 48 cards", () => {
+  const deck = createDeck(MAX_PLAYERS, CARDS_PER_PLAYER);
   assert(deck.cards.length === 48, `Expected 48, got ${deck.cards.length}`);
 });
 
-test("Deck has no duplicate cards", () => {
-  let deck = createDeck(5, 8);
-  let seen = new Set();
-  for (let card of deck.cards) {
-    let key = card.suit + card.rank;
-    assert(!seen.has(key), `Duplicate card: ${key}`);
+test("Deck contains no duplicate cards", () => {
+  const deck = createDeck(MIN_PLAYERS, CARDS_PER_PLAYER);
+  const seen = new Set();
+  for (const card of deck.cards) {
+    const key = card.suit + card.rank;
+    assert(!seen.has(key), `Duplicate card found: ${key}`);
     seen.add(key);
   }
 });
 
 test("Invalid player count throws error", () => {
   let threw = false;
-  try { createDeck(4, 8); } catch (e) { threw = true; }
-  assert(threw, "Should have thrown for 4 players");
+  try { createDeck(4, CARDS_PER_PLAYER); } catch (e) { threw = true; }
+  assert(threw, "Should throw for 4 players");
 });
 
-test("5 players: deck has correct ranks (5 to A)", () => {
-  let deck = createDeck(5, 8);
-  let ranks = [...new Set(deck.cards.map(c => c.rank))].sort();
-  let expected = ['10', '5', '6', '7', '8', '9', 'A', 'J', 'K', 'Q'].sort();
-  assert(JSON.stringify(ranks) === JSON.stringify(expected), `Got ranks: ${ranks}`);
+test("5 player deck contains correct ranks", () => {
+  const deck = createDeck(MIN_PLAYERS, CARDS_PER_PLAYER);
+  const ranks = [...new Set(deck.cards.map(c => c.rank))].sort();
+  const expected = [...new Set(RANKS_MIN_PLAYERS)].sort();
+  assert(JSON.stringify(ranks) === JSON.stringify(expected), `Got: ${ranks}`);
 });
 
-test("Deal gives each player 8 cards", () => {
-  let deck = createDeck(5, 8);
-  let hands = dealCards(deck, 5);
-  for (let hand of hands) {
-    assert(hand.length === 8, `Expected 8, got ${hand.length}`);
+test("6 player deck contains correct ranks", () => {
+  const deck = createDeck(MAX_PLAYERS, CARDS_PER_PLAYER);
+  const ranks = [...new Set(deck.cards.map(c => c.rank))].sort();
+  const expected = [...new Set(RANKS_MAX_PLAYERS)].sort();
+  assert(JSON.stringify(ranks) === JSON.stringify(expected), `Got: ${ranks}`);
+});
+
+test("Deal gives each player correct number of cards", () => {
+  const deck = createDeck(MIN_PLAYERS, CARDS_PER_PLAYER);
+  const hands = dealCards(deck, MIN_PLAYERS);
+  for (const hand of hands) {
+    assert(hand.length === CARDS_PER_PLAYER, `Expected ${CARDS_PER_PLAYER}, got ${hand.length}`);
   }
 });
 
-test("Deal rejects wrong player count", () => {
+test("Deal rejects mismatched player count", () => {
   let threw = false;
-  let deck = createDeck(5, 8);
-  try { dealCards(deck, 6); } catch (e) { threw = true; }
-  assert(threw, "Should have thrown for mismatched player count");
+  const deck = createDeck(MIN_PLAYERS, CARDS_PER_PLAYER);
+  try { dealCards(deck, MAX_PLAYERS); } catch (e) { threw = true; }
+  assert(threw, "Should throw for mismatched player count");
 });
 
-// ─────────────────────────────────────────────
-console.log("\n GAME SETUP TESTS");
-// ─────────────────────────────────────────────
+// -------------------------------------------------
+console.log("\nGAME SETUP TESTS");
+// -------------------------------------------------
 
-test("createGame initializes correctly for 5 players", () => {
-  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  assert(game.players.length === 5, "Should have 5 players");
-  assert(game.currentPlayerIndex === 0, "Should start at index 0");
-  assert(game.currentContract.name === null, "Contract should be null");
-  for (let p of game.players) {
+test("createGame initializes scores to 0", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  for (const p of game.players) {
     assert(game.scores[p] === 0, `${p} score should be 0`);
+  }
+});
+
+test("createGame gives each player 4 contracts", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  for (const p of game.players) {
     assert(game.contractsAvailable[p].length === 4, `${p} should have 4 contracts`);
   }
+});
+
+test("createGame starts at player index 0", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  assert(game.currentPlayerIndex === 0, "Should start at index 0");
+});
+
+test("createGame sets currentContract to null", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  assert(game.currentContract.name === null, "Contract name should be null");
+  assert(game.currentContract.isBlind === false, "isBlind should be false");
 });
 
 test("createGame rejects invalid player count", () => {
@@ -106,220 +161,396 @@ test("createGame rejects invalid player count", () => {
 });
 
 test("createGame shuffles player order", () => {
-  let original = ["Alice", "Bob", "Charlie", "Diana", "Eve"];
-  let results = new Set();
+  const original = ["Alice", "Bob", "Charlie", "Diana", "Eve"];
+  const firstPlayers = new Set();
   for (let i = 0; i < 20; i++) {
-    let game = createGame([...original]);
-    results.add(game.players[0]);
+    const game = createGame([...original]);
+    firstPlayers.add(game.players[0]);
   }
-  assert(results.size > 1, "Player order should be randomized");
+  assert(firstPlayers.size > 1, "Player order should vary across games");
 });
 
-// ─────────────────────────────────────────────
-console.log("\n CONTRACT TESTS");
-// ─────────────────────────────────────────────
+test("createGame gives each player independent contract list", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game.contractsAvailable[game.players[0]].splice(0, 1);
+  assert(
+    game.contractsAvailable[game.players[1]].length === 4,
+    "Removing contract from player 0 should not affect player 1"
+  );
+});
 
-test("chooseContract sets contract correctly", () => {
+test("createGame initializes rentzTable with all null suits", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  for (const suit of SUITS) {
+    assert(game.rentzTable[suit] === null, `${suit} should be null`);
+  }
+});
+
+// -------------------------------------------------
+console.log("\nCONTRACT TESTS");
+// -------------------------------------------------
+
+test("chooseContract sets contract name and blind status", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  assert(game.currentContract.name === "Rentz", "Contract should be Rentz");
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  assert(game.currentContract.name === RENTZ_CONTRACT, "Contract should be Rentz");
   assert(game.currentContract.isBlind === false, "Should not be blind");
 });
 
-test("chooseContract removes contract from player's available list", () => {
+test("chooseContract blind sets isBlind to true", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  let firstPlayer = game.players[0];
-  game = chooseContract(game, 0, "Rentz", false);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, true);
+  assert(game.currentContract.isBlind === true, "Should be blind");
+});
+
+test("chooseContract removes contract from player available list", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  const firstPlayer = game.players[0];
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
   assert(
-    !game.contractsAvailable[firstPlayer].includes("Rentz"),
+    !game.contractsAvailable[firstPlayer].includes(RENTZ_CONTRACT),
     "Rentz should be removed from available contracts"
   );
 });
 
 test("chooseContract advances currentPlayerIndex", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
   assert(game.currentPlayerIndex === 1, "Should advance to player 1");
+});
+
+test("chooseContract wraps currentPlayerIndex at end", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game = chooseContract(game, 1, DIAMONDS_CONTRACT, false);
+  game = chooseContract(game, 2, TOTALS_CONTRACT, false);
+  game = chooseContract(game, 3, RED_POPE_CONTRACT, false);
+  game = chooseContract(game, 4, RENTZ_CONTRACT, false);
+  assert(game.currentPlayerIndex === 0, "Should wrap back to 0");
 });
 
 test("chooseContract rejects wrong player turn", () => {
   let threw = false;
-  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  try { chooseContract(game, 2, "Rentz", false); } catch (e) { threw = true; }
-  assert(threw, "Should throw when wrong player tries to choose");
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  try { chooseContract(game, 2, RENTZ_CONTRACT, false); } catch (e) { threw = true; }
+  assert(threw, "Should throw when wrong player chooses");
 });
 
-test("chooseContract rejects unavailable contract", () => {
+test("chooseContract rejects already used contract", () => {
   let threw = false;
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  game = chooseContract(game, 1, "Diamonds", false);
-  game = chooseContract(game, 2, "Totals", false);
-  game = chooseContract(game, 3, "Red Pope", false);
-  game = chooseContract(game, 4, "Rentz", false);
-  // Player 0 tries to pick Rentz again
-  try { chooseContract(game, 0, "Rentz", false); } catch (e) { threw = true; }
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game = chooseContract(game, 1, DIAMONDS_CONTRACT, false);
+  game = chooseContract(game, 2, TOTALS_CONTRACT, false);
+  game = chooseContract(game, 3, RED_POPE_CONTRACT, false);
+  game = chooseContract(game, 4, RENTZ_CONTRACT, false);
+  try { chooseContract(game, 0, RENTZ_CONTRACT, false); } catch (e) { threw = true; }
   assert(threw, "Should throw when contract already used");
 });
 
 test("chooseContract deals cards to all players", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  for (let p of game.players) {
-    assert(game.hands[p].length === 8, `${p} should have 8 cards`);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  for (const p of game.players) {
+    assert(game.hands[p].length === CARDS_PER_PLAYER, `${p} should have ${CARDS_PER_PLAYER} cards`);
   }
 });
 
 test("chooseContract resets tricksTaken and cardsTaken", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Diamonds", false);
-  game = chooseContract(game, 1, "Rentz", false);
-  for (let p of game.players) {
-    assert(game.tricksTaken[p] === 0, `${p} tricksTaken should reset`);
-    assert(game.cardsTaken[p].length === 0, `${p} cardsTaken should reset`);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
+  game = chooseContract(game, 1, RENTZ_CONTRACT, false);
+  for (const p of game.players) {
+    assert(game.tricksTaken[p] === 0, `${p} tricksTaken should be 0`);
+    assert(game.cardsTaken[p].length === 0, `${p} cardsTaken should be empty`);
   }
 });
 
-// ─────────────────────────────────────────────
-console.log("\n SCORING TESTS");
-// ─────────────────────────────────────────────
-
-test("scoreDiamonds: -20 per diamond taken", () => {
+test("chooseContract resets rentzTable", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Diamonds", false);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game = chooseContract(game, 1, DIAMONDS_CONTRACT, false);
+  for (const suit of SUITS) {
+    assert(game.rentzTable[suit] === null, `${suit} should reset to null`);
+  }
+});
+
+// -------------------------------------------------
+console.log("\nHELPER FUNCTION TESTS");
+// -------------------------------------------------
+
+test("advancePlayer increments currentPlayerIndex", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  advancePlayer(game);
+  assert(game.currentPlayerIndex === 1, "Should advance to 1");
+});
+
+test("advancePlayer wraps at end of player list", () => {
+  const game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game.currentPlayerIndex = 4;
+  advancePlayer(game);
+  assert(game.currentPlayerIndex === 0, "Should wrap to 0");
+});
+
+test("isTheCardPlayedLegal allows card matching lead suit", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
+  game.leadSuit = HEARTS_SUIT;
+  game.hands[game.players[0]] = [{ suit: HEARTS_SUIT, rank: A_RANK }];
+  const result = isTheCardPlayedLegal(game, 0, { suit: HEARTS_SUIT, rank: A_RANK });
+  assert(result === true, "Should allow matching suit");
+});
+
+test("isTheCardPlayedLegal rejects card when player has lead suit", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
+  game.leadSuit = HEARTS_SUIT;
+  game.hands[game.players[0]] = [
+    { suit: HEARTS_SUIT, rank: A_RANK },
+    { suit: SPADES_SUIT, rank: K_RANK }
+  ];
+  const result = isTheCardPlayedLegal(game, 0, { suit: SPADES_SUIT, rank: K_RANK });
+  assert(result === false, "Should reject when player has lead suit card");
+});
+
+test("isTheCardPlayedLegal allows any card when no lead suit set", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
+  game.hands[game.players[0]] = [{ suit: SPADES_SUIT, rank: A_RANK }];
+  const result = isTheCardPlayedLegal(game, 0, { suit: SPADES_SUIT, rank: A_RANK });
+  assert(result === true, "Should allow any card when no lead suit");
+});
+
+test("removeCardFromHandAfterBeingPlayed removes correct card", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
+  game.hands[game.players[0]] = [
+    { suit: HEARTS_SUIT, rank: A_RANK },
+    { suit: SPADES_SUIT, rank: K_RANK }
+  ];
+  removeCardFromHandAfterBeingPlayed(game, 0, { suit: HEARTS_SUIT, rank: A_RANK });
+  assert(game.hands[game.players[0]].length === 1, "Should have 1 card left");
+  assert(game.hands[game.players[0]][0].rank === K_RANK, "Remaining card should be K");
+});
+
+test("findTrickWinner returns player with highest lead suit card", () => {
+  const trick = [
+    { playerIndex: 0, card: { suit: HEARTS_SUIT, rank: RENTZ_STARTING_RANK } },
+    { playerIndex: 1, card: { suit: HEARTS_SUIT, rank: A_RANK } },
+    { playerIndex: 2, card: { suit: SPADES_SUIT, rank: K_RANK } },
+    { playerIndex: 3, card: { suit: HEARTS_SUIT, rank: "7" } },
+    { playerIndex: 4, card: { suit: HEARTS_SUIT, rank: Q_RANK } },
+  ];
+  const winner = findTrickWinner(trick, HEARTS_SUIT);
+  assert(winner === 1, `Expected player 1 to win, got player ${winner}`);
+});
+
+test("findTrickWinner ignores cards of wrong suit", () => {
+  const trick = [
+    { playerIndex: 0, card: { suit: HEARTS_SUIT, rank: "7" } },
+    { playerIndex: 1, card: { suit: SPADES_SUIT, rank: A_RANK } },
+  ];
+  const winner = findTrickWinner(trick, HEARTS_SUIT);
+  assert(winner === 0, `Expected player 0 to win, got player ${winner}`);
+});
+
+// -------------------------------------------------
+console.log("\nSCORING TESTS");
+// -------------------------------------------------
+
+test("scoreDiamonds subtracts DIAMOND_PENALTY per diamond taken", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, false);
   game.cardsTaken[game.players[0]] = [
-    { suit: "Diamonds", rank: "A" },
-    { suit: "Diamonds", rank: "K" },
-    { suit: "Hearts", rank: "A" },
+    { suit: DIAMONDS_SUIT, rank: A_RANK },
+    { suit: DIAMONDS_SUIT, rank: K_RANK },
+    { suit: HEARTS_SUIT, rank: A_RANK },
   ];
   game = scoreDiamonds(game);
-  assert(game.scores[game.players[0]] === -40, `Expected -40, got ${game.scores[game.players[0]]}`);
+  assert(
+    game.scores[game.players[0]] === -(DIAMOND_PENALTY * 2),
+    `Expected ${-(DIAMOND_PENALTY * 2)}, got ${game.scores[game.players[0]]}`
+  );
 });
 
-test("scoreDiamonds: doubled when blind", () => {
+test("scoreDiamonds doubles penalty when blind", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Diamonds", true);
+  game = chooseContract(game, 0, DIAMONDS_CONTRACT, true);
   game.cardsTaken[game.players[0]] = [
-    { suit: "Diamonds", rank: "A" },
+    { suit: DIAMONDS_SUIT, rank: A_RANK },
   ];
   game = scoreDiamonds(game);
-  assert(game.scores[game.players[0]] === -40, `Expected -40, got ${game.scores[game.players[0]]}`);
+  assert(
+    game.scores[game.players[0]] === -(DIAMOND_PENALTY * 2),
+    `Expected ${-(DIAMOND_PENALTY * 2)}, got ${game.scores[game.players[0]]}`
+  );
 });
 
-test("scoreRedPope: -150 for King of Hearts", () => {
+test("scoreRedPope subtracts RED_POPE_PENALTY for King of Hearts", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Red Pope", false);
+  game = chooseContract(game, 0, RED_POPE_CONTRACT, false);
   game.cardsTaken[game.players[0]] = [
-    { suit: "Hearts", rank: "K" },
+    { suit: HEARTS_SUIT, rank: K_RANK },
   ];
   game = scoreRedPope(game);
-  assert(game.scores[game.players[0]] === -150, `Expected -150, got ${game.scores[game.players[0]]}`);
+  assert(
+    game.scores[game.players[0]] === -RED_POPE_PENALTY,
+    `Expected ${-RED_POPE_PENALTY}, got ${game.scores[game.players[0]]}`
+  );
 });
 
-test("scoreRedPope: -300 when blind", () => {
+test("scoreRedPope doubles penalty when blind", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Red Pope", true);
+  game = chooseContract(game, 0, RED_POPE_CONTRACT, true);
   game.cardsTaken[game.players[0]] = [
-    { suit: "Hearts", rank: "K" },
+    { suit: HEARTS_SUIT, rank: K_RANK },
   ];
   game = scoreRedPope(game);
-  assert(game.scores[game.players[0]] === -300, `Expected -300, got ${game.scores[game.players[0]]}`);
+  assert(
+    game.scores[game.players[0]] === -(RED_POPE_PENALTY * 2),
+    `Expected ${-(RED_POPE_PENALTY * 2)}, got ${game.scores[game.players[0]]}`
+  );
 });
 
-test("scoreTotals: -10 per trick, -150 for red pope, -20 per diamond, -40 per queen", () => {
+test("scoreTotals applies all penalty rules correctly", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Totals", false);
-  let p = game.players[0];
+  game = chooseContract(game, 0, TOTALS_CONTRACT, false);
+  const p = game.players[0];
   game.tricksTaken[p] = 2;
   game.cardsTaken[p] = [
-    { suit: "Hearts", rank: "K" },   // -150
-    { suit: "Diamonds", rank: "A" }, // -20
-    { suit: "Spades", rank: "Q" },   // -40
-    { suit: "Diamonds", rank: "Q" }, // -40 -20 = -60
+    { suit: HEARTS_SUIT, rank: K_RANK },   // -RED_POPE_PENALTY
+    { suit: DIAMONDS_SUIT, rank: A_RANK }, // -DIAMOND_PENALTY
+    { suit: SPADES_SUIT, rank: Q_RANK },   // -QUEEN_PENALTY
+    { suit: DIAMONDS_SUIT, rank: Q_RANK }, // -QUEEN_PENALTY -DIAMOND_PENALTY
   ];
   game = scoreTotals(game);
-  // -20 (tricks) -150 -20 -40 -60 = -290
-  assert(game.scores[p] === -290, `Expected -290, got ${game.scores[p]}`);
+  const expected = -(
+    TOTALS_TRICK_PENALTY * 2 +
+    RED_POPE_PENALTY +
+    DIAMOND_PENALTY +
+    QUEEN_PENALTY +
+    QUEEN_PENALTY + DIAMOND_PENALTY
+  );
+  assert(game.scores[p] === expected, `Expected ${expected}, got ${game.scores[p]}`);
 });
 
-test("scoreRentz: correct points for finish order", () => {
+test("scoreTotals doubles all penalties when blind", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
+  game = chooseContract(game, 0, TOTALS_CONTRACT, true);
+  const p = game.players[0];
+  game.tricksTaken[p] = 1;
+  game.cardsTaken[p] = [
+    { suit: DIAMONDS_SUIT, rank: A_RANK },
+  ];
+  game = scoreTotals(game);
+  const expected = -((TOTALS_TRICK_PENALTY + DIAMOND_PENALTY) * 2);
+  assert(game.scores[p] === expected, `Expected ${expected}, got ${game.scores[p]}`);
+});
+
+test("scoreRentz assigns correct points by finish order", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
   game.rentzFinishOrder = [2, 0, 4, 1, 3];
   game = scoreRentz(game);
-  assert(game.scores[game.players[2]] === 300, `1st should get 300`);
-  assert(game.scores[game.players[0]] === 250, `2nd should get 250`);
-  assert(game.scores[game.players[4]] === 200, `3rd should get 200`);
-  assert(game.scores[game.players[1]] === 150, `4th should get 150`);
-  assert(game.scores[game.players[3]] === 100, `5th should get 100`);
+  assert(game.scores[game.players[2]] === RENTZ_STARTING_GAIN, `1st should get ${RENTZ_STARTING_GAIN}`);
+  assert(game.scores[game.players[0]] === RENTZ_STARTING_GAIN - RENTZ_TAX, `2nd should get ${RENTZ_STARTING_GAIN - RENTZ_TAX}`);
+  assert(game.scores[game.players[4]] === RENTZ_STARTING_GAIN - RENTZ_TAX * 2, `3rd should get ${RENTZ_STARTING_GAIN - RENTZ_TAX * 2}`);
 });
 
-test("scoreRentz: doubled when blind", () => {
+test("scoreRentz doubles points when blind", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", true);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, true);
   game.rentzFinishOrder = [0, 1, 2, 3, 4];
   game = scoreRentz(game);
-  assert(game.scores[game.players[0]] === 600, `1st should get 600 when blind`);
-  assert(game.scores[game.players[1]] === 500, `2nd should get 500 when blind`);
+  assert(
+    game.scores[game.players[0]] === RENTZ_STARTING_GAIN * 2,
+    `1st should get ${RENTZ_STARTING_GAIN * 2} when blind`
+  );
+  assert(
+    game.scores[game.players[1]] === (RENTZ_STARTING_GAIN - RENTZ_TAX) * 2,
+    `2nd should get ${(RENTZ_STARTING_GAIN - RENTZ_TAX) * 2} when blind`
+  );
 });
 
-// ─────────────────────────────────────────────
-console.log("\n RENTZ GAMEPLAY TESTS");
-// ─────────────────────────────────────────────
+// -------------------------------------------------
+console.log("\nRENTZ GAMEPLAY TESTS");
+// -------------------------------------------------
 
-test("playCardRentz: must start with a 10", () => {
+test("updateRentzTable rejects non-10 as first card", () => {
   let threw = false;
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  game.hands[game.players[0]] = [{ suit: "Spades", rank: "A" }];
-  try { playCardRentz(game, 0, { suit: "Spades", rank: "A" }); } catch (e) { threw = true; }
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  try { updateRentzTable(game, { suit: SPADES_SUIT, rank: A_RANK }); } catch (e) { threw = true; }
   assert(threw, "Should throw if first card is not a 10");
 });
 
-test("playCardRentz: valid 10 starts a row", () => {
+test("updateRentzTable initializes row when 10 is played", () => {
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  game.hands[game.players[0]] = [{ suit: "Spades", rank: "10" }];
-  game = playCardRentz(game, 0, { suit: "Spades", rank: "10" });
-  assert(game.rentzTable["Spades"] !== null, "Spades row should be started");
-  assert(game.rentzTable["Spades"].low === "10", "Low should be 10");
-  assert(game.rentzTable["Spades"].high === "10", "High should be 10");
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  updateRentzTable(game, { suit: SPADES_SUIT, rank: RENTZ_STARTING_RANK });
+  assert(game.rentzTable[SPADES_SUIT] !== null, "Spades row should be initialized");
+  assert(game.rentzTable[SPADES_SUIT].low === RENTZ_STARTING_RANK, "Low should be 10");
+  assert(game.rentzTable[SPADES_SUIT].high === RENTZ_STARTING_RANK, "High should be 10");
 });
 
-test("playCardRentz: cannot play card that doesn't extend a row", () => {
+test("updateRentzTable extends row upward correctly", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game.rentzTable[SPADES_SUIT] = { low: RENTZ_STARTING_RANK, high: RENTZ_STARTING_RANK };
+  updateRentzTable(game, { suit: SPADES_SUIT, rank: "J" });
+  assert(game.rentzTable[SPADES_SUIT].high === "J", "High should extend to J");
+});
+
+test("updateRentzTable extends row downward correctly", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game.rentzTable[SPADES_SUIT] = { low: RENTZ_STARTING_RANK, high: RENTZ_STARTING_RANK };
+  updateRentzTable(game, { suit: SPADES_SUIT, rank: "9" });
+  assert(game.rentzTable[SPADES_SUIT].low === "9", "Low should extend to 9");
+});
+
+test("updateRentzTable rejects card that does not extend row", () => {
   let threw = false;
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  game.rentzTable["Spades"] = { low: "10", high: "10" };
-  game.hands[game.players[0]] = [{ suit: "Spades", rank: "8" }];
-  try { playCardRentz(game, 0, { suit: "Spades", rank: "8" }); } catch (e) { threw = true; }
-  assert(threw, "Should throw for invalid card placement");
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game.rentzTable[SPADES_SUIT] = { low: RENTZ_STARTING_RANK, high: RENTZ_STARTING_RANK };
+  try { updateRentzTable(game, { suit: SPADES_SUIT, rank: "8" }); } catch (e) { threw = true; }
+  assert(threw, "Should throw for non-consecutive card");
 });
 
-test("skipTurnRentz: cannot skip if valid card exists", () => {
+test("skipTurnRentz rejects skip when valid card exists", () => {
   let threw = false;
   let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
-  game.rentzTable["Spades"] = { low: "10", high: "10" };
-  game.hands[game.players[0]] = [{ suit: "Spades", rank: "J" }];
-  try { skipTurnRentz(game, 0); } catch (e) { threw = true; }
-  assert(threw, "Should throw if player has a valid card to play");
-});
-
-test("skipTurnRentz: can skip if no valid card", () => {
-  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
-  game = chooseContract(game, 0, "Rentz", false);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
   game.currentPlayerIndex = 0;
-  game.rentzTable["Spades"] = { low: "10", high: "A" };
-  game.rentzTable["Hearts"] = { low: "10", high: "A" };
-  game.rentzTable["Diamonds"] = { low: "10", high: "A" };
-  game.rentzTable["Clovers"] = { low: "10", high: "A" };
-  game.hands[game.players[0]] = [{ suit: "Spades", rank: "5" }];
+  game.rentzTable[SPADES_SUIT] = { low: RENTZ_STARTING_RANK, high: RENTZ_STARTING_RANK };
+  game.hands[game.players[0]] = [{ suit: SPADES_SUIT, rank: "J" }];
+  try { skipTurnRentz(game, 0); } catch (e) { threw = true; }
+  assert(threw, "Should throw if player has a valid card");
+});
+
+test("skipTurnRentz allows skip when no valid card exists", () => {
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  game.currentPlayerIndex = 0;
+  game.rentzTable[SPADES_SUIT] = { low: LOWEST_RANK_MIN_PLAYERS, high: A_RANK };
+  game.rentzTable[HEARTS_SUIT] = { low: LOWEST_RANK_MIN_PLAYERS, high: A_RANK };
+  game.rentzTable[DIAMONDS_SUIT] = { low: LOWEST_RANK_MIN_PLAYERS, high: A_RANK };
+  game.rentzTable[CLOVER_SUIT] = { low: LOWEST_RANK_MIN_PLAYERS, high: A_RANK };
+  game.hands[game.players[0]] = [{ suit: SPADES_SUIT, rank: LOWEST_RANK_MIN_PLAYERS }];
   game = skipTurnRentz(game, 0);
   assert(game.currentPlayerIndex === 1, "Should advance to next player");
 });
 
-// ─────────────────────────────────────────────
-console.log("\n─────────────────────────────────");
-console.log(`  Results: ${passed} passed, ${failed} failed`);
-console.log("─────────────────────────────────\n");
+test("skipTurnRentz rejects wrong player turn", () => {
+  let threw = false;
+  let game = createGame(["Alice", "Bob", "Charlie", "Diana", "Eve"]);
+  game = chooseContract(game, 0, RENTZ_CONTRACT, false);
+  try { skipTurnRentz(game, 0); } catch (e) { threw = true; }
+  assert(threw, "Should throw when wrong player tries to skip");
+});
+
+// -------------------------------------------------
+console.log("\n-------------------------------------------------");
+console.log(`Results: ${passed} passed, ${failed} failed`);
+console.log("-------------------------------------------------\n");
